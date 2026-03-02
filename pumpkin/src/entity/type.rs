@@ -21,6 +21,7 @@ use crate::{
                 bogged::BoggedSkeletonEntity, parched::ParchedSkeletonEntity,
                 skeleton::SkeletonEntity, stray::StraySkeletonEntity, wither::WitherSkeletonEntity,
             },
+            squid::SquidEntity,
             zombie::{ZombieEntity, drowned::DrownedEntity, husk::HuskEntity},
             zombie_villager::ZombieVillagerEntity,
         },
@@ -71,6 +72,8 @@ pub async fn from_type(
         id if id == EntityType::PAINTING.id => Arc::new(PaintingEntity::new(entity)),
         id if id == EntityType::END_CRYSTAL.id => Arc::new(EndCrystalEntity::new(entity)),
         id if id == EntityType::SILVERFISH.id => SilverfishEntity::new(entity).await,
+        id if id == EntityType::SQUID.id => SquidEntity::new(entity).await,
+        id if id == EntityType::GLOW_SQUID.id => SquidEntity::new(entity).await,
         // Fallback Entity
         _ => {
             if entity_type.max_health.is_some() {

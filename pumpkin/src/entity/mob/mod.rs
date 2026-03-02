@@ -27,6 +27,7 @@ pub mod creeper;
 pub mod enderman;
 pub mod silverfish;
 pub mod skeleton;
+pub mod squid;
 pub mod zombie;
 pub mod zombie_villager;
 

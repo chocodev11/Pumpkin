@@ -392,6 +392,8 @@ pub struct Entity {
     pub on_ground: AtomicBool,
     /// Indicates whether the entity is touching water
     pub touching_water: AtomicBool,
+    /// Previous tick's `touching_water` state
+    pub was_touching_water: AtomicBool,
     /// Indicates the fluid height
     pub water_height: AtomicCell<f64>,
     /// Indicates whether the entity is touching lava
@@ -487,6 +489,7 @@ impl Entity {
             entity_type,
             on_ground: AtomicBool::new(false),
             touching_water: AtomicBool::new(false),
+            was_touching_water: AtomicBool::new(false),
             water_height: AtomicCell::new(0.0),
             touching_lava: AtomicBool::new(false),
             lava_height: AtomicCell::new(0.0),
@@ -1166,6 +1169,8 @@ impl Entity {
 
         self.water_height.store(water_height);
 
+        self.was_touching_water
+            .store(self.touching_water.load(Ordering::SeqCst), Ordering::SeqCst);
         self.touching_water.store(in_water, Ordering::SeqCst);
 
         let lava_height = fluid_height[1];
