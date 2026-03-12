@@ -26,6 +26,44 @@ pub struct GenerationSettingsStruct {
     #[serde(rename = "noise")]
     pub shape: GenerationShapeConfigStruct,
     pub surface_rule: MaterialRuleStruct,
+    #[serde(default)]
+    pub spawn_target: Vec<SpawnTargetPointStruct>,
+}
+
+#[derive(Deserialize)]
+pub struct SpawnTargetPointStruct {
+    pub temperature: RangeOrValue,
+    pub humidity: RangeOrValue,
+    pub continentalness: RangeOrValue,
+    pub erosion: RangeOrValue,
+    pub depth: RangeOrValue,
+    pub weirdness: RangeOrValue,
+    pub offset: RangeOrValue,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(untagged)]
+pub enum RangeOrValue {
+    Range([f32; 2]),
+    Value(f32),
+}
+
+impl RangeOrValue {
+    fn into_parameter_range_tokens(self) -> TokenStream {
+        let (min, max) = match self {
+            Self::Range([min, max]) => (to_long(min), to_long(max)),
+            Self::Value(value) => {
+                let value = to_long(value);
+                (value, value)
+            }
+        };
+
+        quote!(ParameterRange::new(#min, #max))
+    }
+}
+
+const fn to_long(value: f32) -> i64 {
+    (value * 10000.0) as i64
 }
 
 #[derive(Deserialize)]
@@ -143,6 +181,11 @@ impl ToTokens for GenerationSettingsStruct {
         let block = &self.default_block;
         let shape = &self.shape;
         let rule = &self.surface_rule;
+        let spawn_target = self
+            .spawn_target
+            .iter()
+            .map(SpawnTargetPointStruct::to_tokens_array)
+            .collect::<Vec<_>>();
 
         tokens.extend(quote!(
             GenerationSettings {
@@ -154,8 +197,23 @@ impl ToTokens for GenerationSettingsStruct {
                 shape: #shape,
                 surface_rule: #rule,
                 default_block: #block,
+                spawn_target: &[#(#spawn_target),*],
             }
         ));
+    }
+}
+
+impl SpawnTargetPointStruct {
+    fn to_tokens_array(&self) -> TokenStream {
+        let temperature = self.temperature.into_parameter_range_tokens();
+        let humidity = self.humidity.into_parameter_range_tokens();
+        let continentalness = self.continentalness.into_parameter_range_tokens();
+        let erosion = self.erosion.into_parameter_range_tokens();
+        let depth = self.depth.into_parameter_range_tokens();
+        let weirdness = self.weirdness.into_parameter_range_tokens();
+        let offset = self.offset.into_parameter_range_tokens();
+
+        quote!([#temperature, #humidity, #continentalness, #erosion, #depth, #weirdness, #offset])
     }
 }
 
@@ -373,6 +431,7 @@ pub fn build() -> TokenStream {
     quote!(
         use crate::dimension::Dimension;
         use crate::chunk::DoublePerlinNoiseParameters;
+        use crate::chunk::ParameterRange;
 
         use std::{cell::RefCell, num::NonZeroUsize};
         use pumpkin_util::random::RandomDeriver;
@@ -394,6 +453,7 @@ pub fn build() -> TokenStream {
             pub shape: GenerationShapeConfig,
             pub surface_rule: MaterialRule,
             pub default_block: BlockBlueprint,
+            pub spawn_target: &'static [[ParameterRange; 7]],
         }
 
         pub struct GenerationShapeConfig {

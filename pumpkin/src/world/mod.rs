@@ -11,6 +11,7 @@ pub mod chunker;
 pub mod explosion;
 pub mod loot;
 pub mod portal;
+pub mod spawn;
 pub mod time;
 
 use crate::block::RandomTickArgs;
@@ -219,8 +220,11 @@ impl World {
         block_registry: Arc<BlockRegistry>,
         server: Weak<Server>,
     ) -> Self {
-        // TODO
         let generation_settings = GenerationSettings::from_dimension(&dimension);
+        let worldborder = {
+            let info = level_info.load();
+            Worldborder::from_level_data(&info)
+        };
 
         // Load portal POI from disk (PoiStorage::new automatically loads from disk if files exist)
         let portal_poi = portal::PortalPoiStorage::new(&level.level_folder.root_folder);
@@ -232,7 +236,7 @@ impl World {
             players: ArcSwap::new(Arc::new(Vec::new())),
             entities: ArcSwap::new(Arc::new(Vec::new())),
             scoreboard: Mutex::new(Scoreboard::default()),
-            worldborder: Mutex::new(Worldborder::new(0.0, 0.0, 5.999_996_8E7, 0, 5, 300)),
+            worldborder: Mutex::new(worldborder),
             level_time: Mutex::new(LevelTime::new()),
             dimension,
             weather: Mutex::new(Weather::new()),
@@ -1303,6 +1307,8 @@ impl World {
         server: &Server,
     ) {
         let level_info = server.level_info.load();
+        let raw_spawn = level_info.spawn.clone();
+        let default_spawn = spawn::effective_default_spawn(self).await;
         let weather = self.weather.lock().await;
         let runtime_id = player.entity_id() as u64;
         let (position, yaw, pitch) = if player.has_played_before.load(Ordering::Relaxed) {
@@ -1312,15 +1318,11 @@ impl World {
 
             (position, yaw, pitch)
         } else {
-            let spawn_position = Vector2::new(level_info.spawn_x, level_info.spawn_z);
-            let pos_y = self.get_top_block(spawn_position).await + 1; // +1 to spawn on top of the block
-
-            let position = Vector3::new(
-                f64::from(level_info.spawn_x) + 0.5,
-                f64::from(pos_y),
-                f64::from(level_info.spawn_z) + 0.5,
-            );
-            (position, level_info.spawn_yaw, level_info.spawn_pitch)
+            (
+                spawn::find_world_spawn_position(self, raw_spawn.block_pos()).await,
+                raw_spawn.yaw,
+                raw_spawn.pitch,
+            )
         };
         // Todo make the data less spread
         let level_settings = LevelSettings {
@@ -1332,11 +1334,7 @@ impl World {
             world_gamemode: server.defaultgamemode.lock().await.gamemode,
             hardcore: base_config.hardcore,
             difficulty: VarInt(level_info.difficulty as i32),
-            spawn_position: NetworkPos(BlockPos::new(
-                level_info.spawn_x,
-                level_info.spawn_y,
-                level_info.spawn_z,
-            )),
+            spawn_position: NetworkPos(default_spawn.block_pos()),
             has_achievements_disabled: false,
             editor_world_type: VarInt(0),
             is_created_in_editor: false,
@@ -1632,16 +1630,12 @@ impl World {
 
             (position, yaw, pitch)
         } else {
-            let info = &self.level_info.load();
-            let spawn_position = Vector2::new(info.spawn_x, info.spawn_z);
-            let pos_y = self.get_top_block(spawn_position).await + 1; // +1 to spawn on top of the block
-
-            let position = Vector3::new(
-                f64::from(info.spawn_x) + 0.5,
-                f64::from(pos_y),
-                f64::from(info.spawn_z) + 0.5,
-            );
-            (position, info.spawn_yaw, info.spawn_pitch)
+            let raw_spawn = self.level_info.load().spawn.clone();
+            (
+                spawn::find_world_spawn_position(self, raw_spawn.block_pos()).await,
+                raw_spawn.yaw,
+                raw_spawn.pitch,
+            )
         };
 
         let velocity = player.living_entity.entity.velocity.load();
@@ -1845,25 +1839,14 @@ impl World {
         // Sends initial time
         player.send_time(self).await;
 
-        let (spawn_block_pos, yaw, pitch) = {
-            let level_info_lock = self.level_info.load();
-            (
-                BlockPos::new(
-                    level_info_lock.spawn_x,
-                    level_info_lock.spawn_y,
-                    level_info_lock.spawn_z,
-                ),
-                level_info_lock.spawn_yaw,
-                level_info_lock.spawn_pitch,
-            )
-        };
+        let default_spawn = spawn::effective_default_spawn(self).await;
 
         client
             .send_packet_now(&CPlayerSpawnPosition::new(
-                spawn_block_pos,
-                yaw,
-                pitch,
-                self.dimension.minecraft_name.to_owned(),
+                default_spawn.block_pos(),
+                default_spawn.yaw,
+                default_spawn.pitch,
+                default_spawn.dimension.clone(),
             ))
             .await;
 
@@ -2014,15 +1997,9 @@ impl World {
         let data_kept = u8::from(alive);
 
         // Copy spawn info from level_info to avoid holding lock across await
-        let (spawn_x, spawn_z, spawn_yaw, spawn_pitch, keep_inventory) = {
+        let (world_spawn, keep_inventory) = {
             let info = self.level_info.load();
-            (
-                info.spawn_x,
-                info.spawn_z,
-                info.spawn_yaw,
-                info.spawn_pitch,
-                info.game_rules.keep_inventory,
-            )
+            (info.spawn.clone(), info.game_rules.keep_inventory)
         };
 
         // Get respawn position and dimension
@@ -2041,20 +2018,18 @@ impl World {
                     .send_packet_now(&CGameEvent::new(GameEvent::NoRespawnBlockAvailable, 0.0))
                     .await;
 
-                // FIXME: This spawn position calculation is incorrect. Should use vanilla's
-                // proper spawn position calculation (see #1381). The y-level calculation
-                // needs to account for spawn radius and find a safe spawn position.
-                let top = self.get_top_block(Vector2::new(spawn_x, spawn_z)).await;
+                let world_spawn_world =
+                    spawn::default_spawn_world(self).unwrap_or_else(|| self.clone());
 
                 (
-                    Vector3::new(
-                        f64::from(spawn_x) + 0.5,
-                        (top + 1).into(),
-                        f64::from(spawn_z) + 0.5,
-                    ),
-                    spawn_yaw,
-                    spawn_pitch,
-                    self.dimension,
+                    spawn::find_world_spawn_position(
+                        world_spawn_world.as_ref(),
+                        world_spawn.block_pos(),
+                    )
+                    .await,
+                    world_spawn.yaw,
+                    world_spawn.pitch,
+                    world_spawn_world.dimension,
                 )
             };
 
@@ -2103,24 +2078,23 @@ impl World {
             // Unload watched chunks from current world
             player.unload_watched_chunks(self).await;
 
-            (new_world.as_ref(), position)
+            (new_world.clone(), position)
         } else if respawn_dimension != self.dimension {
             // Cross-dimension failed - fall back to current world's spawn
             warn!(
                 "Target world {:?} not found, using world spawn in {:?}",
                 respawn_dimension, self.dimension
             );
-            // FIXME: This spawn position calculation is incorrect. Should use vanilla's
-            // proper spawn position calculation (see #1381).
-            let top = self.get_top_block(Vector2::new(spawn_x, spawn_z)).await;
-            let fallback_pos = Vector3::new(
-                f64::from(spawn_x) + 0.5,
-                (top + 1).into(),
-                f64::from(spawn_z) + 0.5,
-            );
-            (self.as_ref(), fallback_pos)
+            let world_spawn_world =
+                spawn::default_spawn_world(self).unwrap_or_else(|| self.clone());
+            let fallback_pos = spawn::find_world_spawn_position(
+                world_spawn_world.as_ref(),
+                world_spawn.block_pos(),
+            )
+            .await;
+            (world_spawn_world, fallback_pos)
         } else {
-            (self.as_ref(), position)
+            (self.clone(), position)
         };
 
         // Send respawn packet with target dimension (using send_packet_now to ensure proper order)
@@ -2144,18 +2118,14 @@ impl World {
         // Inform the client of the default spawn position so the client doesn't
         // fall back to (0, 2, 0) while the world reloads (fixes rubberbanding).
         // This must be sent after the CRespawn packet for proper client positioning.
-        let spawn_block_pos = BlockPos(Vector3::new(
-            position.x.round() as i32,
-            position.y.round() as i32,
-            position.z.round() as i32,
-        ));
+        let default_spawn = spawn::effective_default_spawn(target_world.as_ref()).await;
         player
             .client
             .send_packet_now(&CPlayerSpawnPosition::new(
-                spawn_block_pos,
-                yaw,
-                pitch,
-                target_world.dimension.minecraft_name.to_string(),
+                default_spawn.block_pos(),
+                default_spawn.yaw,
+                default_spawn.pitch,
+                default_spawn.dimension.clone(),
             ))
             .await;
 

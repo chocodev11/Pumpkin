@@ -3,7 +3,10 @@ use std::path::Path;
 
 use crate::CURRENT_MC_VERSION;
 use pumpkin_data::game_rules::GameRuleRegistry;
-use pumpkin_util::{Difficulty, serde_enum_as_integer, world_seed::Seed};
+use pumpkin_util::{
+    Difficulty, math::position::BlockPos, resource_location::ResourceLocation,
+    serde_enum_as_integer, world_seed::Seed,
+};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -26,7 +29,51 @@ pub trait WorldInfoWriter: Sync + Send {
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
-#[serde(rename_all = "PascalCase")]
+pub struct RespawnData {
+    pub dimension: ResourceLocation,
+    #[serde(with = "block_pos_stream")]
+    pub pos: BlockPos,
+    pub yaw: f32,
+    pub pitch: f32,
+}
+
+impl Default for RespawnData {
+    fn default() -> Self {
+        Self::overworld(BlockPos::ZERO)
+    }
+}
+
+impl RespawnData {
+    #[must_use]
+    pub fn overworld(pos: BlockPos) -> Self {
+        Self {
+            dimension: "minecraft:overworld".to_string(),
+            pos,
+            yaw: 0.0,
+            pitch: 0.0,
+        }
+    }
+
+    #[must_use]
+    pub fn with_pos(&self, pos: BlockPos) -> Self {
+        Self {
+            pos,
+            ..self.clone()
+        }
+    }
+
+    #[must_use]
+    pub const fn block_pos(&self) -> BlockPos {
+        self.pos
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[serde(
+    rename_all = "PascalCase",
+    from = "LevelDataSerde",
+    into = "LevelDataSerde"
+)]
 pub struct LevelData {
     #[serde(rename = "allowCommands", default)]
     pub allow_commands: bool,
@@ -66,20 +113,70 @@ pub struct LevelData {
     pub last_played: i64,
     #[serde(default = "default_level_name")]
     pub level_name: String,
-    #[serde(default)]
-    pub spawn_x: i32,
-    #[serde(default = "default_spawn_y")]
-    pub spawn_y: i32,
-    #[serde(default)]
-    pub spawn_z: i32,
-    #[serde(alias = "SpawnAngle", default)]
-    pub spawn_yaw: f32,
-    #[serde(default)]
-    pub spawn_pitch: f32,
+    pub spawn: RespawnData,
     #[serde(rename = "Version", default)]
     pub world_version: WorldVersion,
     #[serde(rename = "version", default = "default_level_version")]
     pub level_version: i32,
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[serde(rename_all = "PascalCase")]
+struct LevelDataSerde {
+    #[serde(rename = "allowCommands", default)]
+    allow_commands: bool,
+    #[serde(default)]
+    border_center_x: f64,
+    #[serde(default)]
+    border_center_z: f64,
+    #[serde(default = "default_border_damage_per_block")]
+    border_damage_per_block: f64,
+    #[serde(default = "default_border_size")]
+    border_size: f64,
+    #[serde(default = "default_border_safe_zone")]
+    border_safe_zone: f64,
+    #[serde(default = "default_border_size")]
+    border_size_lerp_target: f64,
+    #[serde(default)]
+    border_size_lerp_time: i64,
+    #[serde(default = "default_border_warning_blocks")]
+    border_warning_blocks: f64,
+    #[serde(default = "default_border_warning_time")]
+    border_warning_time: f64,
+    #[serde(rename = "clearWeatherTime", default)]
+    clear_weather_time: i32,
+    #[serde(default = "default_data_packs")]
+    data_packs: DataPacks,
+    data_version: i32,
+    #[serde(default)]
+    day_time: i64,
+    #[serde(with = "serde_enum_as_integer", default = "default_difficulty")]
+    difficulty: Difficulty,
+    #[serde(default)]
+    difficulty_locked: bool,
+    #[serde(default)]
+    game_rules: GameRuleRegistry,
+    world_gen_settings: WorldGenSettings,
+    #[serde(default)]
+    last_played: i64,
+    #[serde(default = "default_level_name")]
+    level_name: String,
+    #[serde(rename = "spawn", default)]
+    spawn: Option<RespawnData>,
+    #[serde(default)]
+    spawn_x: Option<i32>,
+    #[serde(default)]
+    spawn_y: Option<i32>,
+    #[serde(default)]
+    spawn_z: Option<i32>,
+    #[serde(alias = "SpawnAngle", default)]
+    spawn_yaw: Option<f32>,
+    #[serde(default)]
+    spawn_pitch: Option<f32>,
+    #[serde(rename = "Version", default)]
+    world_version: WorldVersion,
+    #[serde(rename = "version", default = "default_level_version")]
+    level_version: i32,
 }
 
 const DEFAULT_BORDER_DAMAGE_PER_BLOCK: f64 = 0.2;
@@ -318,19 +415,134 @@ impl LevelData {
             world_gen_settings: WorldGenSettings::new(seed),
             last_played: -1,
             level_name: DEFAULT_LEVEL_NAME.to_string(),
-            spawn_x: 0,
-            spawn_y: DEFAULT_SPAWN_Y,
-            spawn_z: 0,
-            spawn_yaw: 0.0,
-            spawn_pitch: 0.0,
+            spawn: RespawnData::overworld(BlockPos::new(0, DEFAULT_SPAWN_Y, 0)),
             world_version: WorldVersion::default(),
             level_version: MAXIMUM_SUPPORTED_LEVEL_VERSION,
         }
     }
 
-    pub const fn set_pos(&mut self, x: i32, z: i32) {
-        self.spawn_x = x;
-        self.spawn_z = z;
+    #[must_use]
+    pub const fn spawn_pos(&self) -> BlockPos {
+        self.spawn.pos
+    }
+
+    #[must_use]
+    pub fn spawn_dimension(&self) -> &str {
+        &self.spawn.dimension
+    }
+
+    #[must_use]
+    pub const fn spawn_rotation(&self) -> (f32, f32) {
+        (self.spawn.yaw, self.spawn.pitch)
+    }
+
+    pub fn set_spawn(&mut self, spawn: RespawnData) {
+        self.spawn = spawn;
+    }
+
+    pub fn set_spawn_pos(&mut self, pos: BlockPos) {
+        self.spawn = self.spawn.with_pos(pos);
+    }
+}
+
+impl From<LevelDataSerde> for LevelData {
+    fn from(value: LevelDataSerde) -> Self {
+        let spawn = value.spawn.unwrap_or_else(|| RespawnData {
+            dimension: "minecraft:overworld".to_string(),
+            pos: BlockPos::new(
+                value.spawn_x.unwrap_or_default(),
+                value.spawn_y.unwrap_or_else(default_spawn_y),
+                value.spawn_z.unwrap_or_default(),
+            ),
+            yaw: value.spawn_yaw.unwrap_or_default(),
+            pitch: value.spawn_pitch.unwrap_or_default(),
+        });
+
+        Self {
+            allow_commands: value.allow_commands,
+            border_center_x: value.border_center_x,
+            border_center_z: value.border_center_z,
+            border_damage_per_block: value.border_damage_per_block,
+            border_size: value.border_size,
+            border_safe_zone: value.border_safe_zone,
+            border_size_lerp_target: value.border_size_lerp_target,
+            border_size_lerp_time: value.border_size_lerp_time,
+            border_warning_blocks: value.border_warning_blocks,
+            border_warning_time: value.border_warning_time,
+            clear_weather_time: value.clear_weather_time,
+            data_packs: value.data_packs,
+            data_version: value.data_version,
+            day_time: value.day_time,
+            difficulty: value.difficulty,
+            difficulty_locked: value.difficulty_locked,
+            game_rules: value.game_rules,
+            world_gen_settings: value.world_gen_settings,
+            last_played: value.last_played,
+            level_name: value.level_name,
+            spawn,
+            world_version: value.world_version,
+            level_version: value.level_version,
+        }
+    }
+}
+
+impl From<LevelData> for LevelDataSerde {
+    fn from(value: LevelData) -> Self {
+        Self {
+            allow_commands: value.allow_commands,
+            border_center_x: value.border_center_x,
+            border_center_z: value.border_center_z,
+            border_damage_per_block: value.border_damage_per_block,
+            border_size: value.border_size,
+            border_safe_zone: value.border_safe_zone,
+            border_size_lerp_target: value.border_size_lerp_target,
+            border_size_lerp_time: value.border_size_lerp_time,
+            border_warning_blocks: value.border_warning_blocks,
+            border_warning_time: value.border_warning_time,
+            clear_weather_time: value.clear_weather_time,
+            data_packs: value.data_packs,
+            data_version: value.data_version,
+            day_time: value.day_time,
+            difficulty: value.difficulty,
+            difficulty_locked: value.difficulty_locked,
+            game_rules: value.game_rules,
+            world_gen_settings: value.world_gen_settings,
+            last_played: value.last_played,
+            level_name: value.level_name,
+            spawn: Some(value.spawn),
+            spawn_x: None,
+            spawn_y: None,
+            spawn_z: None,
+            spawn_yaw: None,
+            spawn_pitch: None,
+            world_version: value.world_version,
+            level_version: value.level_version,
+        }
+    }
+}
+
+mod block_pos_stream {
+    use super::BlockPos;
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
+
+    pub fn serialize<S>(pos: &BlockPos, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        pumpkin_nbt::nbt_int_array(vec![pos.0.x, pos.0.y, pos.0.z], serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<BlockPos, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let coords = Vec::<i32>::deserialize(deserializer)?;
+        match coords.as_slice() {
+            [x, y, z] => Ok(BlockPos::new(*x, *y, *z)),
+            _ => Err(D::Error::custom(
+                "expected BlockPos int array with exactly 3 entries",
+            )),
+        }
     }
 }
 

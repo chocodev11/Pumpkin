@@ -115,14 +115,10 @@ async fn setworldspawn(
     }
 
     let current_info = server.level_info.load();
-    let previous_position = BlockPos::new(
-        current_info.spawn_x,
-        current_info.spawn_y,
-        current_info.spawn_z,
-    );
+    let previous_position = current_info.spawn.block_pos();
     let mut new_position = block_pos;
-    let previous_yaw = current_info.spawn_yaw;
-    let previous_pitch = current_info.spawn_pitch;
+    let previous_yaw = current_info.spawn.yaw;
+    let previous_pitch = current_info.spawn.pitch;
     let mut new_yaw = yaw;
     let mut new_pitch = pitch;
     let event = SpawnChangeEvent::new(
@@ -141,11 +137,10 @@ async fn setworldspawn(
 
     let mut new_info = (**current_info).clone();
 
-    new_info.spawn_x = new_position.0.x;
-    new_info.spawn_y = new_position.0.y;
-    new_info.spawn_z = new_position.0.z;
-    new_info.spawn_yaw = new_yaw;
-    new_info.spawn_pitch = new_pitch;
+    new_info.spawn.dimension = world.dimension.minecraft_name.to_string();
+    new_info.spawn.pos = new_position;
+    new_info.spawn.yaw = new_yaw;
+    new_info.spawn.pitch = new_pitch;
 
     server.level_info.store(Arc::new(new_info));
 

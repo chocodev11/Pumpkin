@@ -145,11 +145,16 @@ mod test {
     use pumpkin_data::game_rules::GameRuleRegistry;
     use pumpkin_nbt::{deserializer::from_bytes, serializer::to_bytes};
     use pumpkin_util::{Difficulty, world_seed::Seed};
+    use serde::{Deserialize, Serialize};
     use temp_dir::TempDir;
 
     use crate::{
         global_path,
-        world_info::{DataPacks, LevelData, WorldGenSettings, WorldInfoError, WorldVersion},
+        world_info::{
+            DataPacks, LevelData, MAXIMUM_SUPPORTED_LEVEL_VERSION,
+            MAXIMUM_SUPPORTED_WORLD_DATA_VERSION, RespawnData, WorldGenSettings, WorldInfoError,
+            WorldVersion,
+        },
     };
 
     use super::{AnvilLevelInfo, LEVEL_DAT_FILE_NAME, LevelDat, WorldInfoReader, WorldInfoWriter};
@@ -229,11 +234,9 @@ mod test {
             world_gen_settings: WorldGenSettings::new(Seed(1)),
             last_played: 1733847709327,
             level_name: "New World".to_string(),
-            spawn_x: 160,
-            spawn_y: 70,
-            spawn_z: 160,
-            spawn_yaw: 0.0,
-            spawn_pitch: 0.0,
+            spawn: RespawnData::overworld(pumpkin_util::math::position::BlockPos::new(
+                160, 70, 160,
+            )),
             level_version: 19133,
             world_version: WorldVersion {
                 name: "1.21.4".to_string(),
@@ -268,6 +271,55 @@ mod test {
             from_bytes(Cursor::new(serialized)).expect("Failed to decode from bytes");
 
         assert_eq!(level_dat_again, *LEVEL_DAT);
+    }
+
+    #[test]
+    fn legacy_flat_spawn_fields_are_migrated() {
+        #[derive(Serialize, Deserialize)]
+        #[serde(rename_all = "PascalCase")]
+        struct LegacyLevelData {
+            data_version: i32,
+            #[serde(rename = "version")]
+            version: i32,
+            world_gen_settings: WorldGenSettings,
+            spawn_x: i32,
+            spawn_y: i32,
+            spawn_z: i32,
+            #[serde(rename = "SpawnAngle")]
+            spawn_yaw: f32,
+        }
+
+        #[derive(Serialize, Deserialize)]
+        struct LegacyLevelDat {
+            #[serde(rename = "Data")]
+            data: LegacyLevelData,
+        }
+
+        let legacy = LegacyLevelDat {
+            data: LegacyLevelData {
+                data_version: MAXIMUM_SUPPORTED_WORLD_DATA_VERSION,
+                version: MAXIMUM_SUPPORTED_LEVEL_VERSION,
+                world_gen_settings: WorldGenSettings::new(Seed(1)),
+                spawn_x: 12,
+                spawn_y: 80,
+                spawn_z: -7,
+                spawn_yaw: 45.0,
+            },
+        };
+
+        let mut serialized = Vec::new();
+        to_bytes(&legacy, &mut serialized).expect("Failed to encode legacy level.dat");
+
+        let migrated: LevelDat =
+            from_bytes(Cursor::new(serialized)).expect("Failed to decode migrated legacy level");
+
+        assert_eq!(migrated.data.spawn.dimension, "minecraft:overworld");
+        assert_eq!(
+            migrated.data.spawn.pos,
+            pumpkin_util::math::position::BlockPos::new(12, 80, -7)
+        );
+        assert_eq!(migrated.data.spawn.yaw, 45.0);
+        assert_eq!(migrated.data.spawn.pitch, 0.0);
     }
 
     #[test]

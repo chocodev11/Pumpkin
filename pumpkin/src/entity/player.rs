@@ -1834,8 +1834,9 @@ impl Player {
         pitch: Option<f32>,
     ) {
         let current_world = self.living_entity.entity.world.load_full();
-        let yaw = yaw.unwrap_or(new_world.level_info.load().spawn_yaw);
-        let pitch = pitch.unwrap_or(new_world.level_info.load().spawn_pitch);
+        let (default_yaw, default_pitch) = new_world.level_info.load().spawn_rotation();
+        let yaw = yaw.unwrap_or(default_yaw);
+        let pitch = pitch.unwrap_or(default_pitch);
 
         let server = new_world.server.upgrade().unwrap();
 

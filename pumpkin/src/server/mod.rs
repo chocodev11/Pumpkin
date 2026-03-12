@@ -142,6 +142,7 @@ impl Server {
         let block_registry = super::block::registry::default_registry();
 
         let level_info = AnvilLevelInfo.read_world_info(&world_path);
+        let is_new_world = matches!(level_info.as_ref(), Err(WorldInfoError::InfoNotFound));
         if let Err(error) = &level_info {
             match error {
                 // If it doesn't exist, just make a new one
@@ -300,6 +301,36 @@ impl Server {
         server.worlds.store(Arc::new(worlds_vec));
         if let Ok(k) = keys {
             server.mojang_public_keys.store(Arc::new(k));
+        }
+
+        if is_new_world {
+            let overworld = server.get_world_from_dimension(&Dimension::OVERWORLD);
+            let initial_spawn =
+                crate::world::spawn::compute_initial_world_spawn(overworld.as_ref()).await;
+
+            let mut new_info = (**server.level_info.load()).clone();
+            new_info.spawn.dimension = Dimension::OVERWORLD.minecraft_name.to_string();
+            new_info.spawn.pos = initial_spawn.spawn;
+            new_info.spawn.yaw = 0.0;
+            new_info.spawn.pitch = 0.0;
+            server.level_info.store(Arc::new(new_info.clone()));
+
+            if let Err(err) = server
+                .world_info_writer
+                .write_world_info(&new_info, &server.basic_config.get_world_path())
+            {
+                error!("Failed to save initial world spawn: {err}");
+                panic!("Failed to save initial world spawn");
+            }
+
+            info!(
+                "Selected initial world spawn {} {} {} from climate chunk {}, {}",
+                initial_spawn.spawn.0.x,
+                initial_spawn.spawn.0.y,
+                initial_spawn.spawn.0.z,
+                initial_spawn.climate_chunk.x,
+                initial_spawn.climate_chunk.y
+            );
         }
 
         info!("All worlds loaded successfully.");

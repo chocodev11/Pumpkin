@@ -53,3 +53,10 @@ impl GeneratorInit for VanillaGenerator {
         }
     }
 }
+
+impl VanillaGenerator {
+    #[must_use]
+    pub const fn spawn_height(&self) -> i32 {
+        64
+    }
+}

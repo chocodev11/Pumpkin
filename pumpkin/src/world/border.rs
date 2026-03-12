@@ -2,6 +2,7 @@ use pumpkin_protocol::java::client::play::{
     CInitializeWorldBorder, CSetBorderCenter, CSetBorderLerpSize, CSetBorderSize,
     CSetBorderWarningDelay, CSetBorderWarningDistance,
 };
+use pumpkin_world::world_info::LevelData;
 
 use crate::net::java::JavaClient;
 
@@ -112,6 +113,22 @@ impl Worldborder {
     }
 
     #[must_use]
+    pub const fn from_level_data(level_data: &LevelData) -> Self {
+        Self {
+            center_x: level_data.border_center_x,
+            center_z: level_data.border_center_z,
+            old_diameter: level_data.border_size,
+            new_diameter: level_data.border_size_lerp_target,
+            speed: level_data.border_size_lerp_time,
+            portal_teleport_boundary: 29_999_984,
+            warning_blocks: level_data.border_warning_blocks as i32,
+            warning_time: level_data.border_warning_time as i32,
+            damage_per_block: level_data.border_damage_per_block as f32,
+            buffer: level_data.border_safe_zone as f32,
+        }
+    }
+
+    #[must_use]
     pub fn contains(&self, x: f64, z: f64) -> bool {
         let half = self.new_diameter / 2.0;
         let min_x = self.center_x - half;
@@ -135,5 +152,20 @@ impl Worldborder {
         let min_z = (self.center_z - half).floor() as i32;
         let max_z = (self.center_z + half).floor() as i32 - 1;
         (x.clamp(min_x, max_x), z.clamp(min_z, max_z))
+    }
+
+    #[must_use]
+    pub fn distance_to_border(&self, x: f64, z: f64) -> f64 {
+        let half = self.new_diameter / 2.0;
+        let min_x = self.center_x - half;
+        let max_x = self.center_x + half;
+        let min_z = self.center_z - half;
+        let max_z = self.center_z + half;
+        let from_north = z - min_z;
+        let from_south = max_z - z;
+        let from_west = x - min_x;
+        let from_east = max_x - x;
+
+        from_west.min(from_east).min(from_north).min(from_south)
     }
 }
