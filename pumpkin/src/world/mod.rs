@@ -2472,33 +2472,7 @@ impl World {
         );
 
         // Broadcast metadata to Java players so they can correctly interact with the new player
-        let config = player.config.load();
-        let mut java_meta_buf = Vec::new();
-        {
-            let meta = Metadata::new(
-                TrackedData::PLAYER_MODE_CUSTOMISATION,
-                MetaDataType::BYTE,
-                config.skin_parts,
-            );
-            meta.write(&mut java_meta_buf, &JavaMinecraftVersion::V_1_21_4)
-                .unwrap();
-        };
-        {
-            let meta = Metadata::new(
-                TrackedData::PLAYER_MODE_CUSTOMIZATION_ID,
-                MetaDataType::BYTE,
-                config.skin_parts,
-            );
-            meta.write(&mut java_meta_buf, &JavaMinecraftVersion::V_1_21_4)
-                .unwrap();
-        };
-        java_meta_buf.put_u8(255);
-
-        self.broadcast_packet_except_editioned_sync(
-            &[gameprofile.id],
-            &CSetEntityMetadata::new((runtime_id as i32).into(), java_meta_buf.into()),
-            &actor_data,
-        );
+        player.send_client_information();
 
         // 2. Spawn existing players for our new Bedrock client
         let players = self.players.load();
@@ -2940,41 +2914,7 @@ impl World {
         );
 
         // Broadcast metadata to Java players so they can correctly interact with the new player
-        let config = player.config.load();
-        let mut java_meta_buf = Vec::new();
-        {
-            let meta = Metadata::new(
-                TrackedData::PLAYER_MODE_CUSTOMISATION,
-                MetaDataType::BYTE,
-                config.skin_parts,
-            );
-            meta.write(&mut java_meta_buf, &JavaMinecraftVersion::V_1_21_4)
-                .unwrap();
-        };
-        {
-            let meta = Metadata::new(
-                TrackedData::PLAYER_MODE_CUSTOMIZATION_ID,
-                MetaDataType::BYTE,
-                config.skin_parts,
-            );
-            meta.write(&mut java_meta_buf, &JavaMinecraftVersion::V_1_21_4)
-                .unwrap();
-        };
-        java_meta_buf.put_u8(255);
-
-        self.broadcast_packet_except_editioned_sync(
-            &[gameprofile.id],
-            &CSetEntityMetadata::new((entity_id).into(), java_meta_buf.into()),
-            &CSetActorData {
-                actor_runtime_id: VarULong(entity_id as u64),
-                metadata: player.get_entity().bedrock_metadata(),
-                synced_properties: PropertySyncData {
-                    int_properties: HashMap::new(),
-                    float_properties: HashMap::new(),
-                },
-                tick: VarULong(0),
-            },
-        );
+        player.send_client_information();
 
         // Spawn players for our client.
         let id = player.gameprofile.id;
